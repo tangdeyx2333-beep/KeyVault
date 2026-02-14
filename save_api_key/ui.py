@@ -10,6 +10,62 @@ from pystray import MenuItem as item
 from save_api_key.storage import ApiKeyStore
 
 
+class LoginDialog(tk.Toplevel):
+    def __init__(self, master: tk.Misc, is_first_run: bool = False) -> None:
+        print("[DEBUG] 初始化LoginDialog...")
+        super().__init__(master)
+        
+        title_text = "初始化主密码" if is_first_run else "登录"
+        self.title(f"{title_text} - API Key Manager")
+        self.resizable(False, False)
+        self.result: str | None = None
+        
+        # 设置窗口大小和位置
+        self.geometry("300x150")
+        self.transient(master)
+        self.grab_set()
+        
+        # 居中显示
+        self.update_idletasks()
+        x = (self.winfo_screenwidth() - self.winfo_reqwidth()) // 2
+        y = (self.winfo_screenheight() - self.winfo_reqheight()) // 2
+        self.geometry(f"+{x}+{y}")
+        
+        # 确保对话框在最前面并可见
+        self.lift()
+        self.focus_force()
+        self.deiconify()
+
+        if is_first_run:
+            tip_label = ttk.Label(self, text="首次运行，请设置您的主密码：", foreground="blue")
+            tip_label.grid(row=0, column=0, columnspan=2, padx=10, pady=(10, 0), sticky="w")
+
+        row_idx = 1 if is_first_run else 0
+        ttk.Label(self, text="主密码:").grid(row=row_idx, column=0, padx=10, pady=10, sticky="w")
+        self.password_var = tk.StringVar()
+        self.password_entry = ttk.Entry(self, textvariable=self.password_var, show="*", width=30)
+        self.password_entry.grid(row=row_idx, column=1, padx=10, pady=10, sticky="ew")
+
+        btn_frame = ttk.Frame(self)
+        btn_frame.grid(row=row_idx + 1, column=0, columnspan=2, pady=10, sticky="e")
+        
+        btn_text = "设置密码并启动" if is_first_run else "登录"
+        ok_btn = ttk.Button(btn_frame, text=btn_text, command=self._on_ok)
+        ok_btn.grid(row=0, column=0, padx=(0, 8))
+
+        self.bind("<Return>", lambda _e: self._on_ok())
+        self.password_entry.focus_set()
+        print("[DEBUG] LoginDialog初始化完成")
+
+    def _on_ok(self) -> None:
+        pwd = self.password_var.get()
+        if not pwd:
+            messagebox.showerror("错误", "主密码不能为空", parent=self)
+            return
+        self.result = pwd
+        self.destroy()  # 只销毁自己，wait_window就会停止等待
+
+
 class ApiKeyEditDialog(tk.Toplevel):
     def __init__(
         self,
@@ -55,14 +111,11 @@ class ApiKeyEditDialog(tk.Toplevel):
 
         self.transient(master)
         self.grab_set()
-        
-        # 弹窗居中于主窗口
         self.update_idletasks()
         parent = self.master.winfo_toplevel()
         x = parent.winfo_x() + (parent.winfo_width() // 2) - (self.winfo_reqwidth() // 2)
         y = parent.winfo_y() + (parent.winfo_height() // 2) - (self.winfo_reqheight() // 2)
         self.geometry(f"+{x}+{y}")
-        
         self.key_entry.focus_set()
 
     def _on_ok(self) -> None:
@@ -80,9 +133,9 @@ class ApiKeyEditDialog(tk.Toplevel):
 class ToastNotification(tk.Toplevel):
     def __init__(self, master: tk.Misc, message: str, duration: int = 2000):
         super().__init__(master)
-        self.overrideredirect(True)  # 移除窗口边框
-        self.attributes("-alpha", 0.9)  # 设置透明度
-        self.attributes("-topmost", True)  # 保持在顶层
+        self.overrideredirect(True)
+        self.attributes("-alpha", 0.9)
+        self.attributes("-topmost", True)
 
         label = ttk.Label(
             self,
@@ -94,7 +147,6 @@ class ToastNotification(tk.Toplevel):
         )
         label.pack()
 
-        # 计算位置
         master_root = self.master.winfo_toplevel()
         x = master_root.winfo_x() + (master_root.winfo_width() // 2) - (self.winfo_reqwidth() // 2)
         y = master_root.winfo_y() + (master_root.winfo_height() // 2) - (self.winfo_reqheight() // 2)
@@ -108,19 +160,18 @@ class ApiKeyApp(tk.Tk):
         super().__init__()
         self.title("API Key 管理")
         self.minsize(820, 420)
-
-        # 窗口居中
-        self.withdraw() # 先隐藏
+        self.withdraw()
         self.update_idletasks()
         w = self.winfo_screenwidth()
         h = self.winfo_screenheight()
-        size = tuple(int(_) for _ in self.geometry().split('+')[0].split('x'))
-        x = w/2 - size[0]/2
-        y = h/2 - size[1]/2
+        size = tuple(int(_) for _ in self.geometry().split("+")[0].split("x"))
+        x = w / 2 - size[0] / 2
+        y = h / 2 - size[1] / 2
         self.geometry("%dx%d+%d+%d" % (size[0], size[1], x, y))
-        self.deiconify() # 再显示
+        self.deiconify()
 
         self._store = store
+        self._clipboard_content: str | None = None
 
         root = ttk.Frame(self, padding=10)
         root.pack(fill=tk.BOTH, expand=True)
@@ -166,7 +217,6 @@ class ApiKeyApp(tk.Tk):
         self.edit_btn.grid(row=0, column=1, padx=(0, 8))
         self.del_btn.grid(row=0, column=2)
 
-        # 绑定快捷键
         self.bind("<Alt-n>", lambda _e: self._on_new())
         self.bind("<Alt-N>", lambda _e: self._on_new())
         self.bind("<Alt-e>", lambda _e: self._on_edit())
@@ -178,55 +228,32 @@ class ApiKeyApp(tk.Tk):
         self.tree.bind("<Double-1>", lambda _e: self._on_edit())
         self.tree.bind("<Button-1>", self._on_cell_click)
 
-        # 系统托盘相关
         self.protocol("WM_DELETE_WINDOW", self._on_closing)
         self._setup_tray()
 
         self._reload()
 
     def _setup_tray(self) -> None:
-        # 重新绘制蓝色羽毛图标
         width, height = 64, 64
-        image = Image.new('RGBA', (width, height), (0, 0, 0, 0))
+        image = Image.new("RGBA", (width, height), (0, 0, 0, 0))
         draw = ImageDraw.Draw(image)
-        
-        # 1. 绘制羽轴 (从左下到右上，稍微弯曲)
-        # 使用深色
         shaft_color = (30, 30, 30, 255)
         draw.line([16, 52, 48, 12], fill=shaft_color, width=2)
-        
-        # 2. 绘制羽片 (蓝色，长椭圆并带有尖端)
-        # 使用你截图中的蓝色调
-        feather_blue = (70, 130, 180, 255) 
-        # 绘制一个倾斜的、细长的羽毛形状
-        # 我们通过多边形来模拟羽毛的锯齿感和尖锐感
+        feather_blue = (70, 130, 180, 255)
         points = [
-            (18, 50), (14, 40), (18, 25), (30, 12), (45, 8), 
+            (18, 50), (14, 40), (18, 25), (30, 12), (45, 8),
             (52, 12), (50, 25), (42, 40), (30, 50), (18, 50)
         ]
         draw.polygon(points, fill=feather_blue, outline=shaft_color)
-        
-        # 3. 增加羽毛内部的纹理线条
         for i in range(5):
             offset = i * 6
-            draw.line([25+offset, 45-offset, 35+offset, 35-offset], fill=(255, 255, 255, 100), width=1)
+            draw.line([25 + offset, 45 - offset, 35 + offset, 35 - offset], fill=(255, 255, 255, 100), width=1)
 
         menu = (
-            item('显示', self._show_window, default=True),
-            item('退出', self._quit_app),
+            item("显示", self._show_window, default=True),
+            item("退出", self._quit_app),
         )
         self.icon = pystray.Icon("ApiKeyManager", image, "API Key 管理", menu)
-        
-        # 同时设置窗口左上角的图标
-        try:
-            # Tkinter 需要一个具体的图片对象作为窗口图标
-            self.tk_icon = tk.PhotoImage(width=width, height=height)
-            # 这里简单处理，实际通常加载 ico 文件
-            pass 
-        except Exception:
-            pass
-
-        # 在后台线程运行托盘图标
         threading.Thread(target=self.icon.run, daemon=True).start()
 
     def _show_window(self) -> None:
@@ -234,11 +261,14 @@ class ApiKeyApp(tk.Tk):
         self.after(0, self.focus_force)
 
     def _on_closing(self) -> None:
-        # 关闭窗口时最小化到托盘
         self.withdraw()
 
     def _quit_app(self) -> None:
-        # 真正退出应用
+        # 退出前强制清空剪贴板，防止敏感数据泄露
+        try:
+            self.clipboard_clear()
+        except Exception:
+            pass
         self.icon.stop()
         self.after(0, self.quit)
         self.after(0, self.destroy)
@@ -280,6 +310,18 @@ class ApiKeyApp(tk.Tk):
         self.clipboard_append(value)
         self.update()
         ToastNotification(self, "复制成功")
+        self._schedule_clipboard_clear(value)
+
+    def _schedule_clipboard_clear(self, content: str) -> None:
+        self._clipboard_content = content
+        self.after(30000, self._clear_clipboard_if_match, content)
+
+    def _clear_clipboard_if_match(self, content: str) -> None:
+        try:
+            if self.clipboard_get() == content:
+                self.clipboard_clear()
+        except Exception:
+            pass
 
     def _get_selected(self) -> tuple[str, str, str] | None:
         sel = self.tree.selection()
